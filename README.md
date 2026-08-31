@@ -18,7 +18,7 @@ Resource-management code often needs an action to be performed when leaving a sc
 
 `scope_exit` provides this behavior without requiring a separate named cleanup function or manually duplicating the cleanup operation across multiple exit paths.
 
-The implementation is intentionally small. It provides one responsibility: **invoke a callable when the `scope_exit` object is destroyed.**
+The implementation is intentionally small. It provides one core responsibility: **invoke a callable when the `scope_exit` object is destroyed**, with move transfer of that responsibility as a secondary capability.
 
 ## Basic Usage
 
@@ -96,14 +96,31 @@ When the exception causes the scope to be unwound, the `scope_exit` destructor r
 
 ## `noexcept` Requirement
 
-The callable must be nothrow-invocable:
+The destructor is declared:
 
 ```cpp
-static_assert(std::is_nothrow_move_constructible_v<F>);
-static_assert(std::is_nothrow_invocable_v<F&>);
+~scope_exit() noexcept {
+  if (active_) {
+    function_();
+  }
+}
 ```
 
-Consequently, this is valid:
+A cleanup operation that throws from a destructor is particularly dangerous during exception unwinding. If an exception is already being propagated, a second exception escaping the destructor would result in `std::terminate()`.
+
+To make this safe, the callable must be nothrow-invocable:
+
+```cpp
+static_assert(std::is_nothrow_invocable_v<F&>);
+static_assert(std::is_nothrow_invocable_v<const F&>);
+```
+
+These two asserts cover different call sites, not the same requirement twice:
+
+* `is_nothrow_invocable_v<F&>` is an unconditional class invariant. It backs the destructor's call above, and also backs the recovery call used by the `F&&` constructor's failure path (see "Ownership and Construction" below).
+* `is_nothrow_invocable_v<const F&>` is required specifically because the lvalue-copy constructor's failure path invokes the callable through a `const F&`. A mutable lambda (non-const `operator()`) will fail this assert and can only be used via the `F&&` overload instead.
+
+Given these constraints, this is valid:
 
 ```cpp
 scope_exit cleanup([]() noexcept {
@@ -119,19 +136,7 @@ scope_exit cleanup([] {
 });
 ```
 
-The requirement is deliberate.
-
-The destructor is declared:
-
-```cpp
-~scope_exit() noexcept {
-  function_();
-}
-```
-
-A cleanup operation that throws from a destructor is particularly dangerous during exception unwinding. If an exception is already being propagated, a second exception escaping the destructor would result in `std::terminate()`.
-
-Requiring the callable to be nothrow-invocable makes this property explicit at construction time.
+Requiring the callable to be nothrow-invocable makes the destructor's safety explicit at construction time, rather than leaving it to be discovered at the moment of unwinding.
 
 ## Destruction Order
 
@@ -165,7 +170,7 @@ The resulting order is:
 
 This is the same deterministic destruction ordering provided by ordinary automatic objects.
 
-## Ownership of the Callable
+## Ownership and Construction
 
 The callable is stored by value inside the `scope_exit` object:
 
@@ -173,28 +178,96 @@ The callable is stored by value inside the `scope_exit` object:
 F function_;
 ```
 
-Construction moves the callable into the guard:
+`scope_exit` can be constructed from either an lvalue or an rvalue callable:
 
 ```cpp
-explicit scope_exit(F&& function) noexcept
-    : function_(std::move(function)) {}
+explicit scope_exit(const F& function) noexcept(
+    std::is_nothrow_copy_constructible_v<F>);
+
+explicit scope_exit(F&& function) noexcept(
+    std::is_nothrow_move_constructible_v<F>);
 ```
 
-This means the guard owns the callable for the lifetime of the scope.
+Construction is only unconditionally `noexcept` when `F`'s copy or move constructor is itself `noexcept`. If constructing `function_` throws, each constructor's failure path invokes the source callable once before propagating the exception, so a resource the callable is responsible for still gets a chance to be cleaned up:
 
-## Non-Movable and Non-Copyable
+```cpp
+explicit scope_exit(F&& function) noexcept(
+    std::is_nothrow_move_constructible_v<F>) try
+    : function_(std::move(function)) {
+} catch (...) {
+  function();
+  throw;
+}
+```
 
-`scope_exit` objects cannot be copied or moved:
+This recovery is best-effort: the state of `function` after a failed copy or move depends on whatever exception guarantee `F`'s constructor provides. At minimum it remains destructible, but its value and behavior are otherwise unspecified. Nothrow invocability only guarantees the recovery call itself won't throw, not that it retains its original semantics.
+
+## Releasing a Guard
+
+A guard can be disarmed so it no longer invokes its callable on destruction:
+
+```cpp
+void release() noexcept { active_ = false; }
+```
+
+```cpp
+void Function() {
+  scope_exit cleanup([]() noexcept {
+    Cleanup();
+  });
+
+  // ...operation succeeds...
+
+  cleanup.release();  // Cleanup() will not run.
+}
+```
+
+This is useful when the cleanup should only fire on the failure path of an operation that otherwise completes normally, or when ownership of the pending action is being handed off elsewhere (see "Move Semantics" below, where `release()` is used internally to disarm a moved-from guard).
+
+## Move Semantics
+
+Unlike copying, moving a `scope_exit` is supported. Moving transfers responsibility for invoking the callable to the destination guard and disarms the source, so the callback still executes exactly once:
+
+```cpp
+scope_exit(scope_exit&& other) noexcept(
+    std::is_nothrow_move_constructible_v<F>)
+    : function_(std::move(other.function_)), active_(other.active_) {
+  other.release();
+}
+```
+
+This allows a guard to be returned by value from a factory function or relocated into a container:
+
+```cpp
+scope_exit<CleanupFn> MakeCleanupGuard(Resource& resource) {
+  return scope_exit([&resource]() noexcept {
+    ReleaseResource(resource);
+  });
+}
+
+void Function() {
+  auto guard = MakeCleanupGuard(resource);
+  // guard now owns the cleanup action; resource is released
+  // when guard goes out of scope here, not inside MakeCleanupGuard.
+}
+```
+
+Move *assignment*, however, is disabled:
+
+```cpp
+scope_exit& operator=(scope_exit&&) = delete;
+```
+
+Move assignment would require deciding how to handle the destination's existing, still-pending cleanup action (run it immediately, discard it, or something else), and no single choice is clearly correct for all callers. Rather than pick a policy, move assignment is simply not provided.
+
+## Non-Copyable
+
+`scope_exit` objects cannot be copied:
 
 ```cpp
 scope_exit(const scope_exit&) = delete;
 scope_exit& operator=(const scope_exit&) = delete;
-
-scope_exit(scope_exit&&) = delete;
-scope_exit& operator=(scope_exit&&) = delete;
 ```
-
-This keeps the lifetime relationship straightforward:
 
 ```text
 scope_exit lifetime
@@ -204,10 +277,10 @@ scope_exit lifetime
        +-- callback executes exactly once
                          |
                          v
-                  object destruction
+                  object destruction (or transfer via move)
 ```
 
-A guard represents an action associated with one particular scope. Moving or copying that responsibility is therefore intentionally not supported.
+A guard represents an action associated with one particular scope. Copying would give two guards ownership of the same cleanup action, causing it to run more than once, so copying is disabled. Moving avoids this problem by transferring ownership rather than duplicating it, which is why it's permitted where copying is not.
 
 ## Design Philosophy
 
@@ -215,7 +288,7 @@ A guard represents an action associated with one particular scope. Moving or cop
 
 Its responsibility is deliberately narrow:
 
-> Execute one nothrow callable when leaving a scope.
+> Execute one nothrow-invocable callable exactly once, either when leaving a scope or when explicitly released beforehand.
 
 The small implementation also makes its lifetime semantics easy to inspect and reason about.
 
@@ -262,11 +335,12 @@ void Process() {
     return;
   }
 
+  cleanup.release();
   Commit();
 }
 ```
 
-The cleanup operation is declared once, near the point where the responsibility begins, and is automatically performed regardless of whether the function:
+The cleanup operation is declared once, near the point where the responsibility begins, and is automatically performed unless explicitly released, regardless of whether the function:
 
 * Reaches the end normally.
 * Returns early.
