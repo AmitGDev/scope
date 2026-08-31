@@ -1,0 +1,47 @@
+name: 'Build Project'
+description: 'Builds the C++ project'
+
+inputs:
+  config:
+    description: 'Build configuration (Debug/Release)'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Build project (Windows)
+      if: runner.os == 'Windows'
+      shell: cmd
+      run: |
+        set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+
+        if not exist "%VSWHERE%" (
+          echo ERROR: vswhere.exe was not found at "%VSWHERE%"
+          exit /b 1
+        )
+
+        for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%i"
+
+        if not defined VSINSTALL (
+          echo ERROR: Visual Studio with the required C++ tools was not found.
+          exit /b 1
+        )
+
+        set "VSDEVCMD=%VSINSTALL%\Common7\Tools\VsDevCmd.bat"
+
+        if not exist "%VSDEVCMD%" (
+          echo ERROR: VsDevCmd.bat was not found at "%VSDEVCMD%"
+          exit /b 1
+        )
+
+        call "%VSDEVCMD%" -arch=x64 -host_arch=x64
+        if errorlevel 1 exit /b 1
+
+        cmake --build build --config ${{ inputs.config }} -j
+        if errorlevel 1 exit /b 1
+
+    - name: Build project (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        cmake --build build -j

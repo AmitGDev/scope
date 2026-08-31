@@ -1,0 +1,103 @@
+name: "Load analysis configuration"
+description: "Loads and validates static code analysis configuration"
+
+outputs:
+  os:
+    description: "JSON array of operating systems"
+    value: ${{ steps.config.outputs.os }}
+
+  configurations:
+    description: "JSON array of build configurations"
+    value: ${{ steps.config.outputs.configurations }}
+
+  codeql:
+    description: "Whether CodeQL analysis is enabled (1 or 0)"
+    value: ${{ steps.config.outputs.codeql }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Parse and validate configuration
+      id: config
+      shell: pwsh
+      run: |
+        $configPath = ".github/static-code-analysis.json"
+
+        if (-not (Test-Path $configPath)) {
+            Write-Error "Configuration file '$configPath' was not found."
+            exit 1
+        }
+
+        try {
+            $config = Get-Content $configPath -Raw | ConvertFrom-Json
+        }
+        catch {
+            Write-Error "Configuration file '$configPath' contains invalid JSON: $($_.Exception.Message)"
+            exit 1
+        }
+
+        if (-not $config.PSObject.Properties['os']) {
+            Write-Error "Configuration property 'os' is missing."
+            exit 1
+        }
+
+        if (-not $config.PSObject.Properties['configurations']) {
+            Write-Error "Configuration property 'configurations' is missing."
+            exit 1
+        }
+
+        if (-not $config.PSObject.Properties['codeql']) {
+            Write-Error "Configuration property 'codeql' is missing."
+            exit 1
+        }
+
+        $os = @($config.os)
+        $configurations = @($config.configurations)
+
+        if ($os.Count -eq 0) {
+            Write-Error "Configuration property 'os' must not be empty."
+            exit 1
+        }
+
+        if ($configurations.Count -eq 0) {
+            Write-Error "Configuration property 'configurations' must not be empty."
+            exit 1
+        }
+
+        $validOs = @(
+            "ubuntu-latest",
+            "windows-latest",
+            "macos-latest"
+        )
+
+        foreach ($value in $os) {
+            if ($value -notin $validOs) {
+                Write-Error "Unsupported OS '$value'. Supported values: $($validOs -join ', ')."
+                exit 1
+            }
+        }
+
+        $validConfigurations = @(
+            "Debug",
+            "Release"
+        )
+
+        foreach ($value in $configurations) {
+            if ($value -notin $validConfigurations) {
+                Write-Error "Unsupported configuration '$value'. Supported values: $($validConfigurations -join ', ')."
+                exit 1
+            }
+        }
+
+        if ($config.codeql -isnot [bool]) {
+            Write-Error "Configuration property 'codeql' must be a boolean."
+            exit 1
+        }
+
+        Write-Host "OS: $($os -join ', ')"
+        Write-Host "Configurations: $($configurations -join ', ')"
+        Write-Host "CodeQL: $($config.codeql)"
+
+        "os=$(ConvertTo-Json -Compress $os)" >> $env:GITHUB_OUTPUT
+        "configurations=$(ConvertTo-Json -Compress $configurations)" >> $env:GITHUB_OUTPUT
+        "codeql=$([int]$config.codeql)" >> $env:GITHUB_OUTPUT
