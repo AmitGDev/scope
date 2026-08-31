@@ -1,0 +1,23 @@
+name: 'Configure CMake'
+description: 'Configures CMake build system'
+
+inputs:
+  config:
+    description: 'Build configuration (Debug/Release)'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Configure CMake (Windows)
+      if: runner.os == 'Windows'
+      shell: cmd
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+        cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ inputs.config }} -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
+
+    - name: Configure CMake (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ inputs.config }} -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++

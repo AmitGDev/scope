@@ -1,0 +1,10 @@
+name: 'Setup C++ dependencies'
+description: 'Installs and configures external C++ dependencies'
+
+runs:
+  using: 'composite'
+
+  steps:
+    - name: No external dependencies
+      shell: bash
+      run: echo "No external dependencies"
