@@ -1,0 +1,205 @@
+# .clang-format
+# Copyright (c) 2026, Amit Gefen
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to
+# deal in the Software without restriction, including without limitation the
+# rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+# sell copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+# IN THE SOFTWARE.
+
+---
+# clang-format configuration for C++23 project
+# Based on Google C++ Style Guide with modern C++ adaptations
+# Compatible with LLVM 23.1
+
+# Base style: Google with customizations
+BasedOnStyle: Google
+
+# Language and standard
+Language: Cpp
+Standard: Latest  # Use Latest for full C++23 support (LLVM 20.1.8+)
+
+# Line length
+ColumnLimit: 80
+
+# Indentation
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+ContinuationIndentWidth: 4
+
+# Namespaces
+NamespaceIndentation: None
+CompactNamespaces: false
+
+# Classes and structs
+AccessModifierOffset: -1
+EmptyLineBeforeAccessModifier: LogicalBlock
+
+# Functions
+AllowShortFunctionsOnASingleLine: Inline
+AlwaysBreakAfterReturnType: None
+IndentWrappedFunctionNames: false
+
+# Control statements
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Empty
+
+# Braces
+BreakBeforeBraces: Attach
+BraceWrapping:
+  AfterCaseLabel: false
+  AfterClass: false
+  AfterControlStatement: Never
+  AfterEnum: false
+  AfterFunction: false
+  AfterNamespace: false
+  AfterStruct: false
+  AfterUnion: false
+  AfterExternBlock: false
+  BeforeCatch: false
+  BeforeElse: false
+  BeforeLambdaBody: false
+  BeforeWhile: false
+  IndentBraces: false
+  SplitEmptyFunction: true
+  SplitEmptyRecord: true
+  SplitEmptyNamespace: true
+
+# Includes
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  # Main header (matches current file name)
+  - Regex: '^".*\.h"$'
+    Priority: 1
+  # C system headers (*.h in angle brackets)
+  - Regex: '^<[^/]+\.h>$'
+    Priority: 2
+  # C++ standard library headers (no dots, no slashes)
+  - Regex: '^<[^/.]+>$'
+    Priority: 3
+  # Platform/system headers
+  - Regex: '^<(windows|winuser|winbase|sys|linux|darwin)'
+    Priority: 4
+  # Third-party libraries (has slashes: boost/, fmt/, etc.)
+  - Regex: '^<.+/.+>$'
+    Priority: 5
+  # Project headers (quotes)
+  - Regex: '^".*"$'
+    Priority: 6
+
+# Pointers and references
+DerivePointerAlignment: false
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# Spacing
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: false
+SpaceAfterTemplateKeyword: true
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCpp11BracedList: false
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
+SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceInEmptyParentheses: false
+SpacesInAngles: Never
+SpacesInCStyleCastParentheses: false
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# Line breaks
+AlwaysBreakBeforeMultilineStrings: true
+AlwaysBreakTemplateDeclarations: Yes
+BreakBeforeBinaryOperators: None
+BreakBeforeTernaryOperators: true
+BreakConstructorInitializers: BeforeColon
+BreakInheritanceList: BeforeColon
+BreakStringLiterals: true
+
+# Bin packing
+BinPackArguments: true
+BinPackParameters: true
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+AlignAfterOpenBracket: Align
+
+# Constructor initializers
+ConstructorInitializerIndentWidth: 4
+PackConstructorInitializers: NextLine
+
+# Comments
+ReflowComments: true
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 1
+
+# Penalties (fine-tuning line breaking decisions)
+PenaltyBreakAssignment: 2
+PenaltyBreakBeforeFirstCallParameter: 19
+PenaltyBreakComment: 300
+PenaltyBreakFirstLessLess: 120
+PenaltyBreakString: 1000
+PenaltyExcessCharacter: 1000000
+PenaltyReturnTypeOnItsOwnLine: 60
+PenaltyBreakOpenParenthesis: 0
+
+# Lambdas
+LambdaBodyIndentation: Signature
+
+# Attributes
+AttributeMacros:
+  - __attribute__
+  - __declspec
+  - alignas
+
+# Macros that should be interpreted as complete statements
+StatementMacros:
+  - Q_UNUSED
+  - QT_REQUIRE_VERSION
+
+# Macros for attributes
+StatementAttributeLikeMacros:
+  - Q_EMIT
+  - emit
+
+# Other
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+SeparateDefinitionBlocks: Always
+
+# Modern C++ features
+Cpp11BracedListStyle: true
+FixNamespaceComments: true
+SortUsingDeclarations: LexicographicNumeric
+
+# Requires clause formatting (C++20)
+IndentRequiresClause: true
+RequiresClausePosition: OwnLine
+RequiresExpressionIndentation: OuterScope
+
+# Disable formatting for specific code blocks
+# Use: // clang-format off ... // clang-format on
+DisableFormat: false
+
+# Experimental features (enable with caution)
+# InsertBraces: true  # Auto-insert braces for single-line control statements
+# RemoveBracesLLVM: false
+# InsertNewlineAtEOF: true
