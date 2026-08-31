@@ -1,0 +1,22 @@
+name: 'Check CMake'
+description: 'Checks CMake file formatting'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check CMake formatting
+      shell: bash
+      run: |
+        echo "Checking CMake formatting with gersemi..."
+
+        # Tracked files only: build trees and fetched dependencies are
+        # untracked, so no exclusion list has to be maintained here.
+        if ! git ls-files -z -- ':(glob)**/CMakeLists.txt' ':(glob)**/*.cmake' \
+            | xargs -0 -r gersemi --check --diff; then
+          echo ""
+          echo "CMake formatting issues found"
+          echo "Run 'gersemi -i .' to fix"
+          exit 1
+        fi
+
+        echo "All CMake files are properly formatted!"

@@ -1,0 +1,161 @@
+name: 'Configure CMake'
+description: 'Configures CMake and optionally prepares the compilation database for analysis'
+
+inputs:
+  config:
+    description: 'Build configuration (Debug/Release, any case)'
+    required: true
+
+outputs:
+  build-dir:
+    description: 'Directory containing the configured build'
+    value: ${{ steps.configure.outputs.build-dir }}
+
+  db-dir:
+    description: 'Directory containing the post-processed compile_commands.json'
+    value: ${{ steps.post-process.outputs.db-dir }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Configure CMake
+      id: configure
+      shell: pwsh
+      env:
+        CONFIG: ${{ inputs.config }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        $prefix = if ($env:RUNNER_OS -eq 'Windows') { 'x64' } else { 'linux' }
+        $preset = "$prefix-$($env:CONFIG.ToLowerInvariant())"
+
+        & cmake --preset $preset | Tee-Object -Variable log
+        if ($LASTEXITCODE -ne 0) {
+          throw "cmake --preset $preset failed with exit code $LASTEXITCODE."
+        }
+
+        # Read the binary directory from CMake's own report rather than
+        # re-deriving it, so a preset's binaryDir can change without this
+        # action silently pointing at the wrong place.
+        $match = $log |
+          Select-String -Pattern '^-- Build files have been written to: (.+)$' |
+          Select-Object -Last 1
+        if (-not $match) {
+          throw 'Could not find the binary directory in the CMake output.'
+        }
+        $binaryDir = $match.Matches[0].Groups[1].Value.Trim()
+
+        # Workspace-relative, because hashFiles() in the workflow only matches
+        # paths inside the workspace.
+        $relative = [IO.Path]::GetRelativePath($env:GITHUB_WORKSPACE, $binaryDir) -replace '\\', '/'
+        Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "build-dir=$relative"
+
+    - name: Post-process compile database (optional)
+      id: post-process
+      shell: python
+      env:
+        SCC_BUILD_DIR: ${{ steps.configure.outputs.build-dir }}
+      run: |
+        import json
+        import os
+        import shutil
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        build_dir = Path(os.environ["SCC_BUILD_DIR"])
+        output_dir = build_dir / "post-processed"
+
+        source_db = build_dir / "compile_commands.json"
+        output_db = output_dir / "compile_commands.json"
+
+        customization_script = (
+            Path(os.environ["GITHUB_WORKSPACE"])
+            / ".github-ext"
+            / "post_process_compile_commands.py"
+        )
+
+        if not source_db.is_file():
+            raise RuntimeError(
+                f"Compilation database not found: {source_db}"
+            )
+
+        try:
+            entries = json.loads(source_db.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"Failed to read compilation database: {source_db}"
+            ) from exc
+
+        if not isinstance(entries, list):
+            raise RuntimeError(
+                f"Compilation database must contain a JSON array: {source_db}"
+            )
+
+        print(f"Compilation database: {source_db}")
+        print(f"Compilation database entries: {len(entries)}")
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        if customization_script.is_file():
+            print(
+                f"Using repository customization script: "
+                f"{customization_script}"
+            )
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(customization_script),
+                    str(source_db),
+                    str(output_dir),
+                ],
+                check=True,
+            )
+        else:
+            print(
+                "No repository customization script found. "
+                "Copying compilation database unchanged."
+            )
+
+            shutil.copyfile(source_db, output_db)
+
+        if not output_db.is_file():
+            raise RuntimeError(
+                f"Post-processing did not produce: {output_db}"
+            )
+
+        try:
+            processed_entries = json.loads(
+                output_db.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"Failed to read post-processed compilation database: "
+                f"{output_db}"
+            ) from exc
+
+        if not isinstance(processed_entries, list):
+            raise RuntimeError(
+                f"Post-processed compilation database must contain "
+                f"a JSON array: {output_db}"
+            )
+
+        print(
+            f"Post-processed compilation database entries: "
+            f"{len(processed_entries)}"
+        )
+
+        if len(processed_entries) != len(entries):
+            raise RuntimeError(
+                "Post-processing changed the number of compilation "
+                f"database entries: {len(entries)} -> "
+                f"{len(processed_entries)}"
+            )
+
+        with open(
+            os.environ["GITHUB_OUTPUT"],
+            "a",
+            encoding="utf-8",
+        ) as fh:
+            fh.write(f"db-dir={output_dir}\n")
