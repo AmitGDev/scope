@@ -1,0 +1,93 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+      "PROJECT_NAME_INPUT": "scope",
+      "PROJECT_DESCRIPTION_INPUT": "Minimal C++ project for developing and testing scope",
+      "PROJECT_VERSION_INPUT": "0.1.0"
+      }
+    },
+    {
+      "name": "x64-debug",
+      "inherits": ["base"],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "binaryDir": "${sourceDir}/build/x64-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "cl.exe"
+      }
+    },
+    {
+      "name": "x64-release",
+      "inherits": ["base"],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "binaryDir": "${sourceDir}/build/x64-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "cl.exe"
+      }
+    },
+    {
+      "name": "linux-debug",
+      "inherits": ["base"],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "binaryDir": "${sourceDir}/build/linux-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "linux-release",
+      "inherits": ["base"],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "binaryDir": "${sourceDir}/build/linux-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "x64-debug",
+      "configurePreset": "x64-debug",
+      "description": "Maps each build preset 1:1 to the configure preset of the same name, so callers (CI, build.ps1, local builds) run 'cmake --build --preset <name>' instead of hardcoding 'cmake --build build/<name>'. Without this, binaryDir's naming convention would be duplicated in every caller instead of living only in configurePresets - the exact drift this file exists to prevent."
+    },
+    {
+      "name": "x64-release",
+      "configurePreset": "x64-release",
+      "description": "See 'x64-debug' build preset for the rationale."
+    },
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug",
+      "description": "See 'x64-debug' build preset for the rationale."
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
+      "description": "See 'x64-debug' build preset for the rationale."
+    }
+  ]
+}
