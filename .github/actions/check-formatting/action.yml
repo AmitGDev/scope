@@ -1,0 +1,33 @@
+name: 'Check Code Formatting'
+description: 'Checks C++ code formatting with clang-format'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check formatting
+      shell: bash
+      run: |
+        echo "Checking code formatting with clang-format..."
+        files=$(find src -name "*.cpp" -o -name "*.hpp" -o -name "*.h" 2>/dev/null || true)
+        
+        if [ -z "$files" ]; then
+          echo "No source files found to check"
+          exit 0
+        fi
+        
+        issues=0
+        for file in $files; do
+          if ! clang-format --dry-run --Werror "$file" 2>&1; then
+            ((issues++))
+            echo "Formatting issues in: $(basename $file)"
+          fi
+        done
+        
+        if [ $issues -gt 0 ]; then
+          echo ""
+          echo "Found formatting issues in $issues file(s)"
+          echo "Run 'clang-format -i src/**/*.{cpp,hpp,h}' to fix"
+          exit 1
+        fi
+        
+        echo "All files are properly formatted!"

@@ -1,0 +1,110 @@
+name: 'Setup C++ Build Environment'
+description: 'Installs LLVM, clang-tidy, Ninja, and configures the build environment'
+
+runs:
+  using: 'composite'
+
+  steps:
+    - name: Setup MSVC environment
+      if: runner.os == 'Windows'
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Install LLVM (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        LLVM_VERSION: '23.1.0'
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        $ver = $env:LLVM_VERSION
+        $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$ver/LLVM-$ver-win64.msi"
+        $msi = "$env:RUNNER_TEMP\LLVM.msi"
+
+        Write-Host "Downloading LLVM $ver..."
+        Invoke-WebRequest -Uri $url -OutFile $msi
+
+        Write-Host "Installing..."
+        $proc = Start-Process msiexec.exe `
+          -ArgumentList "/i `"$msi`" /quiet /norestart" `
+          -Wait `
+          -PassThru
+
+        if ($proc.ExitCode -ne 0) {
+          Write-Host "msiexec failed with exit code $($proc.ExitCode)" -ForegroundColor Red
+          exit 1
+        }
+
+        # Add LLVM to PATH for subsequent steps.
+        echo "C:\Program Files\LLVM\bin" |
+          Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+        $env:PATH = "C:\Program Files\LLVM\bin;$env:PATH"
+
+    - name: Setup Ninja (Windows)
+      if: runner.os == 'Windows'
+      uses: seanmiddleditch/gha-setup-ninja@v5
+
+    - name: Install LLVM tools (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        LLVM_MAJOR: '23'
+      run: |
+        set -euo pipefail
+
+        # Full LLVM release tarballs bundle clang, lld, lldb, mlir, flang,
+        # compiler-rt, libc++, polly, clang-tools-extra, etc. with no way to
+        # extract a subset. apt.llvm.org packages each tool separately, so
+        # this installs only clang-format and clang-tidy plus their direct
+        # deps instead of several GB of unrelated tooling.
+        ver="${LLVM_MAJOR}"
+
+        wget -q https://apt.llvm.org/llvm.sh -O "${RUNNER_TEMP}/llvm.sh"
+        chmod +x "${RUNNER_TEMP}/llvm.sh"
+        sudo "${RUNNER_TEMP}/llvm.sh" "${ver}"
+
+        sudo apt-get install -y -qq -o Dpkg::Use-Pty=0 \
+          "clang-format-${ver}" "clang-tidy-${ver}"
+
+        # Downstream steps call the unversioned binary names, so symlink
+        # them into a directory on PATH rather than editing every caller.
+        bindir="${RUNNER_TEMP}/llvm-bin"
+        mkdir -p "${bindir}"
+        ln -sf "/usr/bin/clang-format-${ver}" "${bindir}/clang-format"
+        ln -sf "/usr/bin/clang-tidy-${ver}" "${bindir}/clang-tidy"
+        ln -sf "/usr/bin/clang++-${ver}" "${bindir}/clang++"
+        ln -sf "/usr/bin/clang-${ver}" "${bindir}/clang"
+
+        echo "${bindir}" >> "$GITHUB_PATH"
+        export PATH="${bindir}:${PATH}"
+
+    - name: Setup Ninja (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        echo "Installing Ninja..."
+        sudo apt-get install -y -qq -o Dpkg::Use-Pty=0 ninja-build
+
+    - name: Show installed versions (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Write-Host "=== Installed versions (Windows) ==="
+        Write-Host "Ninja: $(ninja --version)"
+        clang-format --version
+        clang-tidy --version
+
+    - name: Show installed versions (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        echo "=== Installed versions (Linux) ==="
+        echo "Ninja: $(ninja --version)"
+        clang++ --version
+        clang-format --version
+        clang-tidy --version

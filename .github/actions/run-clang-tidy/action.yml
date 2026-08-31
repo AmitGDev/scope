@@ -1,0 +1,35 @@
+name: 'Run clang-tidy'
+description: 'Runs clang-tidy static analysis'
+
+inputs:
+  build-dir:
+    description: 'Build directory containing compile_commands.json'
+    required: true
+    default: 'build'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run clang-tidy (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        python .github/scripts/run-clang-tidy.py `
+          -p ${{ inputs.build-dir }} `
+          -j $env:NUMBER_OF_PROCESSORS `
+          "-header-filter=source[\\/].*" `
+          -extra-arg=--driver-mode=cl `
+          -extra-arg=/std:c++latest `
+          "src[\\/].*" `
+          "-warnings-as-errors=*"
+
+    - name: Run clang-tidy (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        python .github/scripts/run-clang-tidy.py \
+          -p ${{ inputs.build-dir }} \
+          -j $(nproc) \
+          -header-filter="source/.*" \
+          "src/.*" \
+          -warnings-as-errors='*'

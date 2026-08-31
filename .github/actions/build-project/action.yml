@@ -1,0 +1,23 @@
+name: 'Build Project'
+description: 'Builds the C++ project'
+
+inputs:
+  config:
+    description: 'Build configuration (Debug/Release)'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Build project (Windows)
+      if: runner.os == 'Windows'
+      shell: cmd
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+        cmake --build build --config ${{ inputs.config }} -j
+
+    - name: Build project (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        cmake --build build --config ${{ inputs.config }} -j
