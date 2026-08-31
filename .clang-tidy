@@ -1,0 +1,201 @@
+# .clang-tidy
+# Copyright (c) 2026, Amit Gefen
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to
+# deal in the Software without restriction, including without limitation the
+# rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+# sell copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+# IN THE SOFTWARE.
+
+---
+# clang-tidy configuration for C++23 project
+# Based on Google C++ Style Guide with modern C++ adaptations
+# Compatible with LLVM 23.1
+
+# Group order below (blank-line separated):
+#   1. Base check families
+#   2. Optional HICPP strictness checks
+#   3. Extra security/best-practice checks
+#   4. Disable duplicate checks (aliases of checks above)
+#   5. Disable additional HICPP aliases
+#   6. Disable checks that intentionally diverge from default modern-C++
+#      style to match Google Style (not gaps, deliberate). Google's guide
+#      treats static and unnamed namespace as equally valid for internal
+#      linkage of functions/vars, so don't force one over the other.
+#      llvm-header-guard is also here: it has no option to produce
+#      Google's PROJECT_PATH_FILE_H_ format (only HeaderFileExtensions
+#      is configurable), so enabling it just fights your naming instead
+#      of enforcing it.
+#   7. Disable checks requiring GSL or blocking Windows API interop
+#   8. Disable other noisy checks
+#   9. Disable specific analyzer false positives
+Checks: >
+  -*,
+  bugprone-*,
+  boost-*,
+  clang-analyzer-*,
+  concurrency-*,
+  cppcoreguidelines-*,
+  google-*,
+  llvm-*,
+  misc-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+
+  hicpp-use-override,
+  hicpp-explicit-conversions,
+  hicpp-deprecated-headers,
+  hicpp-braces-around-statements,
+  hicpp-exception-baseclass,
+  hicpp-signed-bitwise,
+
+  cert-err58-cpp,
+  cert-oop54-cpp,
+
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-magic-numbers,
+  -cppcoreguidelines-avoid-c-arrays,
+  -modernize-avoid-c-arrays,
+  -llvm-else-after-return,
+  -cppcoreguidelines-explicit-constructor,
+  -misc-explicit-constructor,
+  -misc-non-private-member-variables-in-classes,
+
+  -hicpp-avoid-c-arrays,
+  -hicpp-avoid-goto,
+  -hicpp-no-array-decay,
+  -hicpp-uppercase-literal-suffix,
+  -hicpp-vararg,
+  -hicpp-static-assert,
+
+  -modernize-use-trailing-return-type,
+  -modernize-use-scoped-lock,
+  -readability-implicit-bool-conversion,
+  -misc-use-anonymous-namespace,
+  -llvm-header-guard,
+
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+
+  -modernize-use-nodiscard,
+
+  -clang-analyzer-optin.core.EnumCastOutOfRange,
+  -clang-analyzer-cplusplus.Move
+
+CheckOptions:
+  # Cognitive complexity: allow macros, set higher threshold
+  - key: readability-function-cognitive-complexity.IgnoreMacros
+    value: true
+  - key: readability-function-cognitive-complexity.Threshold
+    value: 25
+
+  # Modernize: structured bindings
+  - key: modernize-use-structured-bindings.IgnoreMacros
+    value: true
+
+  # Ignore magic numbers in test/mocks
+  - key: cppcoreguidelines-avoid-magic-numbers.IgnoredFilePatterns
+    value: '.*(test|unittest|mock).*'
+
+  # Performance: allow trivial copies for certain types
+  - key: performance-unnecessary-value-param.AllowedTypes
+    value: 'std::string_view;std::unique_ptr;std::shared_ptr;std::optional'
+
+  # Prefer std::format/print over iostreams (requires C++20)
+  - key: modernize-use-std-format.CheckIOStreams
+    value: true
+
+  # Prefer std::span over pointer+size (requires C++20)
+  - key: modernize-use-std-span.MinimalArraySize
+    value: 3
+
+  # ===== Google C++ Style Guide Naming Conventions =====
+
+  # Variables: snake_case
+  - key: readability-identifier-naming.VariableCase
+    value: lower_case
+
+  # Function parameters: snake_case
+  - key: readability-identifier-naming.ParameterCase
+    value: lower_case
+
+  # Free functions: CamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: CamelCase
+
+  # Class/struct methods: CamelCase
+  - key: readability-identifier-naming.MethodCase
+    value: CamelCase
+
+  # Class data members: snake_case with trailing underscore
+  - key: readability-identifier-naming.ClassMemberCase
+    value: lower_case
+  - key: readability-identifier-naming.ClassMemberSuffix
+    value: _
+
+  # Struct data members: snake_case (NO trailing underscore per Google style)
+  # LIMITATION: Clang-tidy can only enforce case style, NOT suffix absence
+  # Does NOT reject: width_, height_ (has underscore - requires external tooling)
+  # Use pre-commit hooks to enforce "no trailing underscore" requirement
+  - key: readability-identifier-naming.StructMemberCase
+    value: lower_case
+
+  # Constexpr variables: kCamelCase
+  - key: readability-identifier-naming.ConstexprVariableCase
+    value: CamelCase
+  - key: readability-identifier-naming.ConstexprVariablePrefix
+    value: k
+
+  # Enum constants: kCamelCase
+  - key: readability-identifier-naming.EnumConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumConstantPrefix
+    value: k
+
+  # Scoped enum constants: kCamelCase
+  - key: readability-identifier-naming.ScopedEnumConstantCase
+    value: CamelCase
+  - key: readability-identifier-naming.ScopedEnumConstantPrefix
+    value: k
+
+  # Classes: CamelCase
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+
+  # Structs: CamelCase
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+
+  # Enums: CamelCase
+  - key: readability-identifier-naming.EnumCase
+    value: CamelCase
+
+  # Namespaces: snake_case
+  - key: readability-identifier-naming.NamespaceCase
+    value: lower_case
+
+# Check all headers (portable across projects, filters system headers automatically)
+HeaderFilterRegex: '.*'
+
+# Treat all warnings as errors in CI
+WarningsAsErrors: '*'
+
+# Enable analysis of temporary destructors (catches RAII issues)
+# AnalyzeTemporaryDtors: true
+
+# Use .clang-format file for style
+FormatStyle: file
