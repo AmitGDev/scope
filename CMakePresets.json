@@ -1,0 +1,94 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "description": "The OS presets are mutually exclusive through 'condition', so they all share build/x64-<cfg> as binaryDir while their preset names stay unique (<os>-<cfg>).",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "PROJECT_NAME_INPUT": "app",
+        "PROJECT_DESCRIPTION_INPUT": "C++23 application",
+        "PROJECT_VERSION_INPUT": "0.1.0"
+      }
+    },
+    {
+      "name": "windows-debug",
+      "inherits": ["base"],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "binaryDir": "${sourceDir}/build/x64-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "cl.exe"
+      }
+    },
+    {
+      "name": "windows-release",
+      "inherits": ["base"],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "binaryDir": "${sourceDir}/build/x64-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "cl.exe"
+      }
+    },
+    {
+      "name": "linux-debug",
+      "inherits": ["base"],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "binaryDir": "${sourceDir}/build/x64-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "linux-release",
+      "inherits": ["base"],
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "binaryDir": "${sourceDir}/build/x64-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-debug",
+      "description": "Maps each build preset 1:1 to the configure preset of the same name, so callers (CI, build.ps1, local builds) run 'cmake --build --preset <name>' instead of hardcoding 'cmake --build <binaryDir>'. Without this, binaryDir's naming convention would be duplicated in every caller instead of living only in configurePresets - the exact drift this file exists to prevent."
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release",
+      "description": "See 'windows-debug' build preset for the rationale."
+    },
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug",
+      "description": "See 'windows-debug' build preset for the rationale."
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
+      "description": "See 'windows-debug' build preset for the rationale."
+    }
+  ]
+}
