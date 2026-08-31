@@ -1,0 +1,27 @@
+name: 'Build Project'
+description: 'Builds the C++ project'
+
+inputs:
+  config:
+    description: 'Build configuration (Debug/Release, any case)'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Normalize config
+      shell: bash
+      run: |
+        echo "CONFIG_LOWER=$(echo '${{ inputs.config }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+    - name: Build project (Windows)
+      if: runner.os == 'Windows'
+      shell: cmd
+      run: |
+        cmake --build --preset x64-%CONFIG_LOWER% -j
+
+    - name: Build project (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        cmake --build --preset linux-$CONFIG_LOWER -j

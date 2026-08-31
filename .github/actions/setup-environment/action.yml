@@ -1,0 +1,266 @@
+name: 'Setup Environment'
+description: 'Sets up standard CI tools and runs optional project-specific environment setup'
+
+runs:
+  using: 'composite'
+
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.14.8'
+
+    - name: Setup Ruff
+      shell: python
+      env:
+        RUFF_VERSION: '0.16.10'
+      run: |
+        import os
+        import subprocess
+        import sys
+
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                f"ruff=={os.environ['RUFF_VERSION']}",
+            ],
+            check=True,
+        )
+
+    - name: Setup MSVC environment
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $vswhere = Join-Path `
+          ${env:ProgramFiles(x86)} `
+          'Microsoft Visual Studio\Installer\vswhere.exe'
+
+        if (-not (Test-Path -LiteralPath $vswhere)) {
+          throw "vswhere.exe was not found: $vswhere"
+        }
+
+        $vsInstallPath = & $vswhere `
+          -latest `
+          -products * `
+          -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+          -property installationPath
+
+        if ([string]::IsNullOrWhiteSpace($vsInstallPath)) {
+          throw 'No Visual Studio installation with the MSVC C++ toolset was found.'
+        }
+
+        # -latest can change when the runner image is updated; log the choice so
+        # toolchain drift is visible when comparing CI runs.
+        Write-Host "Using Visual Studio at: $vsInstallPath"
+
+        $vsDevCmd = Join-Path `
+          $vsInstallPath.Trim() `
+          'Common7\Tools\VsDevCmd.bat'
+
+        if (-not (Test-Path -LiteralPath $vsDevCmd)) {
+          throw "VsDevCmd.bat was not found: $vsDevCmd"
+        }
+
+        # Snapshot first so only what VsDevCmd.bat changes is exported. Re-exporting
+        # runner-managed variables (GITHUB_*, RUNNER_*, NODE_OPTIONS) can be ignored
+        # or rejected by the runner and adds noise to every later step.
+        $before = @{}
+        Get-ChildItem Env: | ForEach-Object { $before[$_.Name] = $_.Value }
+
+        $environment = & cmd.exe /d /s /c `
+          "`"$vsDevCmd`" -no_logo -arch=x64 -host_arch=x64 && set"
+
+        # With '&&', cmd returns VsDevCmd.bat's exit code if it fails.
+        if ($LASTEXITCODE -ne 0) {
+          throw "VsDevCmd.bat failed with exit code $LASTEXITCODE."
+        }
+
+        $changed = foreach ($line in $environment) {
+          if ($line -match '^(?<name>[^=]+)=(?<value>.*)$') {
+            if ($before[$Matches['name']] -cne $Matches['value']) {
+              '{0}={1}' -f $Matches['name'], $Matches['value']
+            }
+          }
+        }
+
+        # An empty diff means the environment was not initialized; fail here
+        # rather than with a confusing "cl.exe not found" in a later step.
+        if (-not $changed) {
+          throw 'VsDevCmd.bat did not change the environment.'
+        }
+
+        # Single write: avoids reopening $GITHUB_ENV once per variable.
+        Add-Content -LiteralPath $env:GITHUB_ENV -Value $changed
+
+    - name: Setup LLVM (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        LLVM_VERSION: '23.1.0'
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        $ver = $env:LLVM_VERSION
+        $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$ver/LLVM-$ver-win64.msi"
+        $msi = "$env:RUNNER_TEMP\LLVM.msi"
+
+        Write-Host "Downloading LLVM $ver..."
+        Invoke-WebRequest -Uri $url -OutFile $msi
+
+        Write-Host "Installing LLVM..."
+        $proc = Start-Process msiexec.exe `
+          -ArgumentList "/i `"$msi`" /quiet /norestart" `
+          -Wait `
+          -PassThru
+
+        if ($proc.ExitCode -ne 0) {
+          Write-Host "msiexec failed with exit code $($proc.ExitCode)" -ForegroundColor Red
+          exit 1
+        }
+
+        # Add LLVM to PATH for subsequent steps.
+        echo "C:\Program Files\LLVM\bin" |
+          Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+        $env:PATH = "C:\Program Files\LLVM\bin;$env:PATH"
+
+    - name: Setup Ninja (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        NINJA_VERSION: '1.13.2'
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        $ver = $env:NINJA_VERSION
+        $url = "https://github.com/ninja-build/ninja/releases/download/v$ver/ninja-win.zip"
+        $zip = "$env:RUNNER_TEMP\ninja.zip"
+        $installDir = "$env:RUNNER_TEMP\ninja"
+
+        Write-Host "Downloading Ninja $ver..."
+        Invoke-WebRequest -Uri $url -OutFile $zip
+
+        Write-Host "Installing Ninja $ver..."
+        New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+        Expand-Archive -Path $zip -DestinationPath $installDir -Force
+
+        echo $installDir |
+          Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+        $env:PATH = "$installDir;$env:PATH"
+
+    - name: Setup LLVM tools (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        LLVM_MAJOR: '23'
+      run: |
+        set -euo pipefail
+
+        # Full LLVM release tarballs bundle clang, lld, lldb, mlir, flang,
+        # compiler-rt, libc++, polly, clang-tools-extra, etc. with no way to
+        # extract a subset. apt.llvm.org packages each tool separately, so
+        # this installs only clang-format and clang-tidy plus their direct
+        # deps instead of several GB of unrelated tooling.
+        ver="${LLVM_MAJOR}"
+
+        wget -q https://apt.llvm.org/llvm.sh -O "${RUNNER_TEMP}/llvm.sh"
+        chmod +x "${RUNNER_TEMP}/llvm.sh"
+        sudo "${RUNNER_TEMP}/llvm.sh" "${ver}"
+
+        sudo apt-get install -y -qq -o Dpkg::Use-Pty=0 \
+          "clang-format-${ver}" "clang-tidy-${ver}"
+
+        # Downstream steps call the unversioned binary names, so symlink
+        # them into a directory on PATH rather than editing every caller.
+        bindir="${RUNNER_TEMP}/llvm-bin"
+        mkdir -p "${bindir}"
+        ln -sf "/usr/bin/clang-format-${ver}" "${bindir}/clang-format"
+        ln -sf "/usr/bin/clang-tidy-${ver}" "${bindir}/clang-tidy"
+        ln -sf "/usr/bin/clang++-${ver}" "${bindir}/clang++"
+        ln -sf "/usr/bin/clang-${ver}" "${bindir}/clang"
+
+        echo "${bindir}" >> "$GITHUB_PATH"
+        export PATH="${bindir}:${PATH}"
+
+    - name: Setup Ninja (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        NINJA_VERSION: '1.13.2'
+      run: |
+        set -euo pipefail
+
+        ver="${NINJA_VERSION}"
+        url="https://github.com/ninja-build/ninja/releases/download/v${ver}/ninja-linux.zip"
+        zip="${RUNNER_TEMP}/ninja.zip"
+        bindir="${RUNNER_TEMP}/ninja-bin"
+
+        echo "Downloading Ninja ${ver}..."
+        wget -q "${url}" -O "${zip}"
+
+        echo "Installing Ninja ${ver}..."
+        mkdir -p "${bindir}"
+        unzip -q -o "${zip}" -d "${bindir}"
+
+        echo "${bindir}" >> "$GITHUB_PATH"
+        export PATH="${bindir}:${PATH}"
+
+    - name: Show tool versions (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Write-Host "=== Tool versions (Windows) ==="
+        python --version
+        ruff --version
+        cl
+        clang-format --version
+        clang-tidy --version
+        Write-Host "Ninja: $(ninja --version)"
+
+    - name: Show tool versions (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        echo "=== Tool versions (Linux) ==="
+        python --version
+        ruff --version
+        clang++ --version
+        clang-format --version
+        clang-tidy --version
+        echo "Ninja: $(ninja --version)"
+
+    - name: Setup project-specific environment (optional)
+      shell: python
+      run: |
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        script = (
+            Path(os.environ["GITHUB_WORKSPACE"])
+            / ".github-ext"
+            / "setup_environment.py"
+        )
+
+        if not script.is_file():
+            print(f"No project-specific extension found: {script}")
+            print("Skipping optional extension.")
+            sys.exit(0)
+
+        print(f"Running project-specific extension: {script}")
+        try:
+            subprocess.run([sys.executable, str(script)], check=True)
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(
+                f"Project-specific extension failed (exit {exc.returncode}): {script}"
+            ) from exc
+
+        print("Project-specific extension completed successfully.")

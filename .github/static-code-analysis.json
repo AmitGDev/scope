@@ -1,0 +1,11 @@
+{
+  "os": [
+    "windows-latest",
+    "ubuntu-latest"
+  ],
+  "configurations": [
+    "Debug",
+    "Release"
+  ],
+  "codeql": true
+}

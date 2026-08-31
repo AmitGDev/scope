@@ -1,0 +1,29 @@
+name: 'Run clang-tidy'
+description: 'Runs clang-tidy static analysis'
+
+inputs:
+  db-dir:
+    description: 'Directory containing the post-processed compile_commands.json'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run clang-tidy
+      shell: bash
+      env:
+        DB_DIR: ${{ inputs.db-dir }}
+      run: |
+        # Composite actions do not enforce 'required', so an input that is
+        # missing or misnamed in the caller arrives as an empty string.
+        if [ -z "${DB_DIR}" ]; then
+          echo "ERROR: input 'db-dir' is empty" >&2
+          exit 1
+        fi
+
+        python .github/scripts/run-clang-tidy.py \
+          -p "${DB_DIR}" \
+          -j "$(nproc)" \
+          -header-filter='src[\\/].*' \
+          'src[\\/].*' \
+          -warnings-as-errors='*'
