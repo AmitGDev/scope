@@ -1,0 +1,158 @@
+name: 'Configure CMake'
+description: 'Configures CMake and optionally prepares the compilation database for analysis'
+
+inputs:
+  config:
+    description: 'Build configuration (Debug/Release, any case)'
+    required: true
+
+outputs:
+  build-dir:
+    description: 'Directory containing the configured build'
+    value: ${{ steps.resolve.outputs.build-dir }}
+
+  db-dir:
+    description: 'Directory containing the post-processed compile_commands.json'
+    value: ${{ steps.post-process.outputs.db-dir }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Normalize config
+      shell: bash
+      run: |
+        echo "CONFIG_LOWER=$(echo '${{ inputs.config }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+    - name: Configure CMake (Windows)
+      if: runner.os == 'Windows'
+      shell: cmd
+      run: |
+        for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%i"
+        call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+        cmake --preset x64-%CONFIG_LOWER%
+
+    - name: Configure CMake (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        cmake --preset linux-$CONFIG_LOWER
+
+    - name: Resolve build directory
+      id: resolve
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          echo "build-dir=build/x64-$CONFIG_LOWER" >> "$GITHUB_OUTPUT"
+        else
+          echo "build-dir=build/linux-$CONFIG_LOWER" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Post-process compile database (optional)
+      id: post-process
+      shell: python
+      env:
+        SCC_BUILD_DIR: ${{ steps.resolve.outputs.build-dir }}
+      run: |
+        import json
+        import os
+        import shutil
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        build_dir = Path(os.environ["SCC_BUILD_DIR"])
+        output_dir = build_dir / "post-processed"
+
+        source_db = build_dir / "compile_commands.json"
+        output_db = output_dir / "compile_commands.json"
+
+        customization_script = (
+            Path(os.environ["GITHUB_WORKSPACE"])
+            / ".github-ext"
+            / "post_process_compile_commands.py"
+        )
+
+        if not source_db.is_file():
+            raise RuntimeError(
+                f"Compilation database not found: {source_db}"
+            )
+
+        try:
+            entries = json.loads(source_db.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"Failed to read compilation database: {source_db}"
+            ) from exc
+
+        if not isinstance(entries, list):
+            raise RuntimeError(
+                f"Compilation database must contain a JSON array: {source_db}"
+            )
+
+        print(f"Compilation database: {source_db}")
+        print(f"Compilation database entries: {len(entries)}")
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        if customization_script.is_file():
+            print(
+                f"Using repository customization script: "
+                f"{customization_script}"
+            )
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(customization_script),
+                    str(source_db),
+                    str(output_dir),
+                ],
+                check=True,
+            )
+        else:
+            print(
+                "No repository customization script found. "
+                "Copying compilation database unchanged."
+            )
+
+            shutil.copyfile(source_db, output_db)
+
+        if not output_db.is_file():
+            raise RuntimeError(
+                f"Post-processing did not produce: {output_db}"
+            )
+
+        try:
+            processed_entries = json.loads(
+                output_db.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"Failed to read post-processed compilation database: "
+                f"{output_db}"
+            ) from exc
+
+        if not isinstance(processed_entries, list):
+            raise RuntimeError(
+                f"Post-processed compilation database must contain "
+                f"a JSON array: {output_db}"
+            )
+
+        print(
+            f"Post-processed compilation database entries: "
+            f"{len(processed_entries)}"
+        )
+
+        if len(processed_entries) != len(entries):
+            raise RuntimeError(
+                "Post-processing changed the number of compilation "
+                f"database entries: {len(entries)} -> "
+                f"{len(processed_entries)}"
+            )
+
+        with open(
+            os.environ["GITHUB_OUTPUT"],
+            "a",
+            encoding="utf-8",
+        ) as fh:
+            fh.write(f"db-dir={output_dir}\n")
