@@ -1,0 +1,38 @@
+name: 'Check Python'
+description: 'Checks Python formatting, lint and types'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check Python
+      shell: bash
+      run: |
+        # One shared file list keeps the three tools on the same set of
+        # files. run-clang-tidy.py is excluded because it is maintained
+        # outside this repository's Python standard.
+        mapfile -d '' -t files < <(git ls-files -z -- '*.py' \
+          ':(exclude).github/scripts/run-clang-tidy.py')
+
+        if [ "${#files[@]}" -eq 0 ]; then
+          echo "No Python files found to check"
+          exit 0
+        fi
+
+        # Run every tool even if an earlier one fails, so a single CI run
+        # reports all Python problems instead of one per push.
+        status=0
+        echo "Checking formatting with ruff format..."
+        ruff format --check "${files[@]}" || status=1
+        echo "Checking lint rules with ruff check..."
+        ruff check --output-format=github "${files[@]}" || status=1
+        echo "Checking types with mypy..."
+        mypy "${files[@]}" || status=1
+
+        if [ "${status}" -ne 0 ]; then
+          echo ""
+          echo "Python checks failed"
+          echo "Run 'ruff format .' to fix formatting; lint and type findings need manual fixes"
+          exit 1
+        fi
+
+        echo "All Python checks passed!"
