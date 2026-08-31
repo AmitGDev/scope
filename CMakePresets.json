@@ -1,0 +1,39 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "x64-debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/x64-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "cl.exe",
+        "PROJECT_NAME_INPUT": "ScopeExit",
+        "PROJECT_DESCRIPTION_INPUT": "Scope Exit",
+        "PROJECT_VERSION_INPUT": "1.0.0"
+      }
+    },
+    {
+      "name": "x64-release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/x64-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "cl.exe",
+        "PROJECT_NAME_INPUT": "ScopeExit",
+        "PROJECT_DESCRIPTION_INPUT": "Scope Exit",
+        "PROJECT_VERSION_INPUT": "1.0.0"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "x64-debug",
+      "configurePreset": "x64-debug"
+    },
+    {
+      "name": "x64-release",
+      "configurePreset": "x64-release"
+    }
+  ]
+}
