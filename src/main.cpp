@@ -31,11 +31,9 @@
 
 namespace {
 
-// scope_exit only requires F to be nothrow move constructible and nothrow
-// invocable; it never copies or moves the stored callable after
-// construction. These two helper types exist purely to instantiate
-// scope_exit with a move-only and a copyable F respectively, to confirm the
-// class template accepts both.
+// A plain nothrow-invocable callable makes no assumptions about which guard
+// invokes it, so one pair of helper types covers both the noexcept-only and
+// the move-only/copyable construction paths of scope_exit.
 struct MoveOnlyCounter final {
   bool* executed = nullptr;
 
@@ -72,6 +70,36 @@ struct CopyableNothrowCallable final {
   CopyableNothrowCallable(CopyableNothrowCallable&&) = default;
   CopyableNothrowCallable& operator=(CopyableNothrowCallable&&) = default;
   ~CopyableNothrowCallable() = default;
+
+  void operator()() const noexcept {
+    if (executed != nullptr) {
+      *executed = true;
+    }
+  }
+};
+
+// Gives scope_exit(F&&)'s catch clause a genuine construction failure to
+// recover from.
+struct ThrowingMoveCallable final {
+  bool* executed = nullptr;
+
+  explicit ThrowingMoveCallable(bool& flag) noexcept : executed(&flag) {}
+
+  ThrowingMoveCallable(const ThrowingMoveCallable&) = delete;
+  ThrowingMoveCallable& operator=(const ThrowingMoveCallable&) = delete;
+
+  // Deliberately throwing and deliberately not noexcept: this type exists
+  // solely to give scope_exit(F&&)'s catch clause a real construction
+  // failure to recover from, so both properties are load-bearing here, not
+  // oversights.
+  // NOLINTNEXTLINE(bugprone-exception-escape,cppcoreguidelines-noexcept-move-operations,performance-noexcept-move-constructor)
+  ThrowingMoveCallable(ThrowingMoveCallable&& other)
+      : executed(other.executed) {
+    throw std::runtime_error("simulated move failure");
+  }
+
+  ThrowingMoveCallable& operator=(ThrowingMoveCallable&&) = delete;
+  ~ThrowingMoveCallable() = default;
 
   void operator()() const noexcept {
     if (executed != nullptr) {
@@ -139,6 +167,71 @@ static bool TestExitCallableOwnership() {
   return executed;
 }
 
+static bool TestExitMoveConstruction() {
+  bool executed = false;
+
+  {
+    amitgdev::scope_exit original(MoveOnlyCounter{executed});
+    const amitgdev::scope_exit moved(std::move(original));
+  }
+
+  return executed;
+}
+
+static bool TestExitMovedFromInactive() {
+  bool executed = false;
+
+  {
+    amitgdev::scope_exit original(MoveOnlyCounter{executed});
+    const amitgdev::scope_exit moved(std::move(original));
+    (void)moved;
+  }
+
+  return executed;
+}
+
+static bool TestExitRelease() {
+  bool executed = false;
+
+  {
+    amitgdev::scope_exit guard([&executed] noexcept { executed = true; });
+    guard.release();
+  }
+
+  return !executed;
+}
+
+static bool TestExitCopyConstruction() {
+  bool executed = false;
+  const CopyableNothrowCallable callable(executed);
+
+  {
+    // callable is a named lvalue, so this can only bind the const F&
+    // constructor overload - F&& requires an rvalue. This is the only test
+    // in this suite that exercises that overload (and, via CTAD, the
+    // deduction guide's lvalue-decay case).
+    const amitgdev::scope_exit guard(callable);
+  }
+
+  return executed;
+}
+
+static bool TestExitThrowingConstruction() {
+  bool executed = false;
+  bool caught = false;
+
+  try {
+    ThrowingMoveCallable callable(executed);
+    const amitgdev::scope_exit guard(std::move(callable));
+  } catch (const std::runtime_error&) {
+    caught = true;
+  }
+
+  // Moving the callable into the guard failed, but the constructor's catch
+  // clause must still invoke the source callable before rethrowing.
+  return caught && executed;
+}
+
 static void RunScopeExitDemo() {
   std::cout << "scope_exit C++23 demo\n\n";
 
@@ -165,6 +258,29 @@ static void RunScopeExitDemo() {
   const bool callable_executed = TestExitCallableOwnership();
   std::cout << "  Callable moved into scope_exit: " << callable_executed
             << "\n\n";
+
+  std::cout << "6. Move construction\n";
+  const bool move_construction_executed = TestExitMoveConstruction();
+  std::cout << "  Moved guard executed: " << move_construction_executed
+            << "\n\n";
+
+  std::cout << "7. Moved-from inactive\n";
+  const bool moved_from_inactive = TestExitMovedFromInactive();
+  std::cout << "  Moved-from guard stayed inactive: " << moved_from_inactive
+            << "\n\n";
+
+  std::cout << "8. Release behavior\n";
+  const bool release_ok = TestExitRelease();
+  std::cout << "  Release prevented execution: " << release_ok << "\n\n";
+
+  std::cout << "9. Copy construction (const F&)\n";
+  const bool copy_construction_executed = TestExitCopyConstruction();
+  std::cout << "  Callback executed: " << copy_construction_executed << "\n\n";
+
+  std::cout << "10. Throwing construction\n";
+  const bool throwing_construction_ok = TestExitThrowingConstruction();
+  std::cout << "  Exception propagated and source callable still ran: "
+            << throwing_construction_ok << "\n\n";
 }
 
 // ===========================================================================
@@ -181,15 +297,14 @@ static void TestCompileTimeProperties() {
   using ExitMoveOnlyGuard = amitgdev::scope_exit<MoveOnlyCounter>;
   using ExitCopyableGuard = amitgdev::scope_exit<CopyableNothrowCallable>;
 
-  // The guard is pinned to its scope regardless of F: copy and move are
-  // unconditionally deleted, even when F itself is copyable.
   static_assert(!std::is_copy_constructible_v<ExitNoexceptGuard>);
   static_assert(!std::is_copy_assignable_v<ExitNoexceptGuard>);
-  static_assert(!std::is_move_constructible_v<ExitNoexceptGuard>);
   static_assert(!std::is_move_assignable_v<ExitNoexceptGuard>);
-  static_assert(!std::is_move_constructible_v<ExitMoveOnlyGuard>);
-  static_assert(!std::is_move_constructible_v<ExitCopyableGuard>);
-  static_assert(!std::is_copy_constructible_v<ExitCopyableGuard>);
+  static_assert(std::is_nothrow_move_constructible_v<ExitNoexceptGuard>);
+  static_assert(!std::is_copy_constructible_v<ExitMoveOnlyGuard>);
+  static_assert(std::is_move_constructible_v<ExitMoveOnlyGuard>);
+  static_assert(std::is_move_constructible_v<ExitCopyableGuard>);
+  static_assert(std::is_nothrow_move_constructible_v<ExitCopyableGuard>);
 }
 
 // NOLINTNEXTLINE(bugprone-exception-escape)
