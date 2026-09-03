@@ -24,9 +24,58 @@
 #include <exception>
 #include <iostream>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 #include "scope.hpp"
+
+namespace {
+
+struct MoveOnlyCounter final {
+  bool* executed = nullptr;
+
+  MoveOnlyCounter() = default;
+
+  explicit MoveOnlyCounter(bool& flag) noexcept : executed(&flag) {}
+
+  MoveOnlyCounter(const MoveOnlyCounter&) = delete;
+  MoveOnlyCounter& operator=(const MoveOnlyCounter&) = delete;
+
+  MoveOnlyCounter(MoveOnlyCounter&& other) noexcept
+      : executed(std::exchange(other.executed, nullptr)) {}
+
+  MoveOnlyCounter& operator=(MoveOnlyCounter&&) = delete;
+
+  ~MoveOnlyCounter() = default;
+
+  void operator()() const noexcept {
+    if (executed != nullptr) {
+      *executed = true;
+    }
+  }
+};
+
+struct CopyableNothrowCallable final {
+  bool* executed = nullptr;
+
+  CopyableNothrowCallable() = default;
+
+  explicit CopyableNothrowCallable(bool& flag) noexcept : executed(&flag) {}
+
+  CopyableNothrowCallable(const CopyableNothrowCallable&) = default;
+  CopyableNothrowCallable& operator=(const CopyableNothrowCallable&) = default;
+  CopyableNothrowCallable(CopyableNothrowCallable&&) = default;
+  CopyableNothrowCallable& operator=(CopyableNothrowCallable&&) = default;
+  ~CopyableNothrowCallable() = default;
+
+  void operator()() const noexcept {
+    if (executed != nullptr) {
+      *executed = true;
+    }
+  }
+};
+
+}  // namespace
 
 static bool TestNormalScopeExit() {
   bool executed = false;
@@ -78,9 +127,66 @@ static bool TestCallableOwnership() {
   return executed;
 }
 
+static bool TestMoveConstruction() {
+  bool executed = false;
+
+  {
+    scope_exit original(MoveOnlyCounter{executed});
+    const scope_exit moved(std::move(original));
+  }
+
+  return executed;
+}
+
+static bool TestMovedFromInactive() {
+  bool executed = false;
+
+  {
+    scope_exit original(MoveOnlyCounter{executed});
+    const scope_exit moved(std::move(original));
+    (void)moved;
+  }
+
+  return executed;
+}
+
+static bool TestRelease() {
+  bool executed = false;
+
+  {
+    scope_exit guard([&executed] noexcept { executed = true; });
+    guard.release();
+  }
+
+  return !executed;
+}
+
+static void TestCompileTimeProperties() {
+  // The non-const local is intentional: preserving the lambda's non-const
+  // type prevents scope_exit from storing a const-qualified callable.
+  // NOLINTNEXTLINE(misc-const-correctness)
+  auto noexcept_callable = [] noexcept {};
+  using NoexceptGuard = scope_exit<decltype(noexcept_callable)>;
+  using MoveOnlyGuard = scope_exit<MoveOnlyCounter>;
+  using CopyableGuard = scope_exit<CopyableNothrowCallable>;
+
+  static_assert(!std::is_copy_constructible_v<NoexceptGuard>);
+  static_assert(!std::is_copy_assignable_v<NoexceptGuard>);
+  static_assert(!std::is_move_assignable_v<NoexceptGuard>);
+  static_assert(std::is_nothrow_move_constructible_v<NoexceptGuard>);
+
+  static_assert(!std::is_copy_constructible_v<MoveOnlyGuard>);
+  static_assert(std::is_move_constructible_v<MoveOnlyGuard>);
+
+  static_assert(std::is_move_constructible_v<CopyableGuard>);
+  static_assert(std::is_nothrow_move_constructible_v<CopyableGuard>);
+}
+
 // NOLINTNEXTLINE(bugprone-exception-escape)
 int main() {
   try {
+    TestCompileTimeProperties();
+
     std::cout << "scope_exit C++23 demo\n\n";
 
     std::cout << "1. Normal scope exit\n";
@@ -106,6 +212,20 @@ int main() {
     const bool callable_executed = TestCallableOwnership();
     std::cout << "  Callable moved into scope_exit: " << callable_executed
               << "\n\n";
+
+    std::cout << "6. Move construction\n";
+    const bool move_construction_executed = TestMoveConstruction();
+    std::cout << "  Moved guard executed: " << move_construction_executed
+              << "\n\n";
+
+    std::cout << "7. Moved-from inactive\n";
+    const bool moved_from_inactive = TestMovedFromInactive();
+    std::cout << "  Moved-from guard stayed inactive: " << moved_from_inactive
+              << "\n\n";
+
+    std::cout << "8. Release behavior\n";
+    const bool release_ok = TestRelease();
+    std::cout << "  Release prevented execution: " << release_ok << "\n\n";
 
     std::cout << "\nDone - OK\n";
     return 0;
