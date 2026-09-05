@@ -24,10 +24,11 @@
     DEALINGS IN THE SOFTWARE.
 */
 
+#include <exception>
 #include <type_traits>
 #include <utility>
 
-// scope_exit uses a constructor-level try/catch because if
+// scope_exit and scope_fail use a constructor-level try/catch because if
 // constructing the stored callable fails, the source callable must still be
 // invoked before the exception is rethrown.
 //
@@ -42,6 +43,9 @@
 //
 // Suppress these warnings locally because there is no known portable code shape
 // that avoids them.
+//
+// scope_success does not need this construction pattern: construction failure
+// is not success, so there is no compensating catch.
 #ifdef _MSC_VER
 #define AMITGDEV_SCOPE_SUPPRESS_NOEXCEPT_FALSE_POSITIVE_BEGIN \
   __pragma(warning(push)) __pragma(warning(disable : 4297))
@@ -142,6 +146,171 @@ class scope_exit final {  // NOLINT(readability-identifier-naming)
 // reference-member specializations.
 template <typename F>
 scope_exit(F) -> scope_exit<std::decay_t<F>>;
+
+// SCOPE FAIL CLASS
+// Named to match std::experimental::scope_fail from the Library Fundamentals
+// TS. Invokes the callable only when this guard is destroyed during exception
+// unwinding.
+//
+// The number of uncaught exceptions is recorded when the guard is created.
+// If the count is greater at destruction, an exception is unwinding through
+// this scope.
+template <typename F>
+class scope_fail final {  // NOLINT(readability-identifier-naming)
+ public:
+  // Rejects pathological direct instantiations such as scope_fail<void> with a
+  // clear diagnostic, rather than failing indirectly in the invocability check.
+  static_assert(std::is_object_v<F>);
+
+  // The callable is invoked by a noexcept destructor, so every stored callable
+  // must be nonthrowing.
+  static_assert(std::is_nothrow_invocable_v<F&>);
+
+  scope_fail(const scope_fail&) = delete;
+  scope_fail& operator=(const scope_fail&) = delete;
+
+  AMITGDEV_SCOPE_SUPPRESS_NOEXCEPT_FALSE_POSITIVE_BEGIN
+
+  // Construction failure is itself an exceptional exit from this constructor.
+  // As with scope_exit, the source callable must therefore be invoked before
+  // the exception propagates. The const-invocability requirement stays on the
+  // constructor for the same reason as in scope_exit.
+  explicit scope_fail(const F& function) noexcept(
+      std::is_nothrow_copy_constructible_v<F>)
+    requires std::is_nothrow_invocable_v<const F&>
+  try : function_(function), exception_count_(std::uncaught_exceptions()) {
+  } catch (...) {
+    function();
+    throw;
+  }
+
+  explicit scope_fail(F&& function) noexcept(
+      std::is_nothrow_move_constructible_v<F>) try
+      : function_(std::move(function)),
+        exception_count_(std::uncaught_exceptions()) {
+  } catch (...) {
+    function();
+    throw;
+  }
+
+  // Moving transfers ownership of the cleanup action and deactivates the
+  // source.
+  scope_fail(scope_fail&& other) noexcept(
+      std::is_nothrow_move_constructible_v<F>)
+    requires std::is_move_constructible_v<F>
+      : function_(std::move(other.function_)),
+        exception_count_(other.exception_count_),
+        active_(other.active_) {
+    other.release();
+  }
+
+  AMITGDEV_SCOPE_SUPPRESS_NOEXCEPT_FALSE_POSITIVE_END
+
+  scope_fail& operator=(scope_fail&&) = delete;
+
+  // NOLINTNEXTLINE(readability-identifier-naming)
+  void release() noexcept { active_ = false; }
+
+  ~scope_fail() noexcept {
+    if (active_ && std::uncaught_exceptions() > exception_count_) {
+      function_();
+    }
+  }
+
+ private:
+  F function_;
+  int exception_count_;
+  bool active_ = true;
+};
+
+// Same rationale as scope_exit's deduction guide: CTAD stores a decayed value
+// type, preventing lvalue callables from producing reference-member
+// specializations.
+template <typename F>
+scope_fail(F) -> scope_fail<std::decay_t<F>>;
+
+// SCOPE SUCCESS CLASS
+// Named to match std::experimental::scope_success from the Library Fundamentals
+// TS. Invokes the callable only when the scope is exited without an exception.
+//
+// Unlike scope_exit and scope_fail, construction failure must not invoke the
+// callable, so a plain member-initializer list is sufficient and no
+// function-try-block is needed.
+//
+// This implementation deliberately requires a nonthrowing callable, unlike the
+// standard facility, so all three guards have the same noexcept destruction
+// contract.
+template <typename F>
+class scope_success final {  // NOLINT(readability-identifier-naming)
+ public:
+  // Rejects pathological direct instantiations such as scope_success<void> with
+  // a clear diagnostic, rather than failing indirectly in the invocability
+  // check.
+  static_assert(std::is_object_v<F>);
+
+  // See the class comment above: this implementation requires a nonthrowing
+  // callable, unlike the standard scope_success facility.
+  static_assert(std::is_nothrow_invocable_v<F&>);
+
+  scope_success(const scope_success&) = delete;
+  scope_success& operator=(const scope_success&) = delete;
+
+// MSVC's C4702 has a documented history of false positives, and Microsoft
+// notes improving its accuracy as a change in the VS 2026 / Build Tools
+// 14.50 preview cycle - but 14.51.36231 (this CI's toolset) still
+// over-triggers it here. No F in this codebase has an always-throwing
+// copy/move constructor, so nothing at this constructor is unreachable.
+#ifdef _MSC_VER
+  __pragma(warning(push)) __pragma(warning(disable : 4702))
+#endif
+
+      explicit scope_success(const F& function) noexcept(
+          std::is_nothrow_copy_constructible_v<F>)
+      : function_(function), exception_count_(std::uncaught_exceptions()) {
+  }
+
+  explicit scope_success(F&& function) noexcept(
+      std::is_nothrow_move_constructible_v<F>)
+      : function_(std::move(function)),
+        exception_count_(std::uncaught_exceptions()) {}
+
+#ifdef _MSC_VER
+  __pragma(warning(pop))
+#endif
+
+      // Moving transfers ownership of the cleanup action and deactivates the
+      // source.
+      scope_success(scope_success&& other) noexcept(
+          std::is_nothrow_move_constructible_v<F>)
+    requires std::is_move_constructible_v<F>
+      : function_(std::move(other.function_)),
+        exception_count_(other.exception_count_),
+        active_(other.active_) {
+    other.release();
+  }
+
+  scope_success& operator=(scope_success&&) = delete;
+
+  // NOLINTNEXTLINE(readability-identifier-naming)
+  void release() noexcept { active_ = false; }
+
+  ~scope_success() noexcept {
+    if (active_ && std::uncaught_exceptions() <= exception_count_) {
+      function_();
+    }
+  }
+
+ private:
+  F function_;
+  int exception_count_;
+  bool active_ = true;
+};
+
+// Same rationale as scope_exit's deduction guide: CTAD stores a decayed value
+// type, preventing lvalue callables from producing reference-member
+// specializations.
+template <typename F>
+scope_success(F) -> scope_success<std::decay_t<F>>;
 
 }  // namespace amitgdev
 
